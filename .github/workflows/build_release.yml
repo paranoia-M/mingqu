@@ -8,7 +8,7 @@ on:
 
 jobs:
   build_windows_exe:
-    runs-on: windows-latest
+    runs-on: windows-latest  # 使用 Windows 虚拟机进行构建
     
     steps:
     - name: Checkout code
@@ -21,23 +21,25 @@ jobs:
         
     - name: Install dependencies
       run: |
+        # 升级 pip 并安装所有依赖 (包括打包和运行时)
         python -m pip install --upgrade pip
-        # 安装所有依赖
         pip install -r requirements.txt
-        pip install pyinstaller psutil
+        pip install pyinstaller psutil  # 确保打包工具和进程管理工具安装
 
     - name: Build the EXE with PyInstaller
       id: build_exe
+      shell: pwsh # 使用 PowerShell 来处理 Windows 路径和文件创建
       run: |
-        # 确保在 Windows 环境中使用正确的 Python 启动命令
-        # PowerShell 环境下的变量定义
+        # 1. 定义输出文件名和文件夹
         $timestamp = Get-Date -Format "yyyyMMdd-HHmm"
-        $output_name = "ChannelMonitor-${{ github.ref_name }}-$timestamp"
+        $branch_name = "${{ github.ref_name }}"
+        $output_folder_name = "ChannelMonitor-${branch_name}-$timestamp"
         
-        # 执行 PyInstaller 打包
+        # 2. 执行 PyInstaller 打包 (使用 --onedir 文件夹模式)
         pyinstaller dashboard_final.py `
-        --name $output_name `
-        --onefile `
+        --name "ChannelMonitor" `            # 生成的可执行文件名
+        --distpath "dist/$output_folder_name" ` # 指定输出目录
+        --onedir `                           # 使用文件夹模式
         --noconsole `
         --collect-all "plotly" `
         --collect-all "streamlit" `
@@ -47,11 +49,17 @@ jobs:
         --add-data "simulator.py;." `
         --add-data "vision_sensor.py;."
         
-        # 将输出文件名传给下一步骤
-        echo "::set-output name=output_name::$output_name"
+        # 3. 创建启动批处理文件 (Start.bat)
+        # 这个文件将用于在 Windows 上启动应用 (解决权限和解释器问题)
+        $bat_content = "@echo off`r`nstart /B ChannelMonitor.exe"
+        Set-Content -Path "dist/$output_folder_name/Start.bat" -Value $bat_content
+        
+        # 4. 将最终文件夹名传递给 Artifacts 步骤
+        echo "::set-output name=output_name::$output_folder_name"
 
     - name: Archive Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ steps.build_exe.outputs.output_name }}-Artifact
-        path: dist/${{ steps.build_exe.outputs.output_name }}.exe
+        name: ChannelMonitor-${{ github.ref_name }}-Portable
+        # 路径指向整个打包文件夹
+        path: dist/${{ steps.build_exe.outputs.output_name }}
