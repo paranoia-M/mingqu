@@ -1,159 +1,49 @@
-name: Cross-Platform Build
+name: Build and Archive on Push
 
 on:
   push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main]
+    branches:
+      - main
+      - develop
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        python-version: ['3.9', '3.10', '3.11']
+  build_for_windows:
+    # 关键：使用 Docker 容器，并指定目标系统
+    runs-on: ubuntu-latest
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/checkout@v3
+
+    - name: Set up QEMU (for cross-platform emulation)
+      uses: docker/setup-qemu-action@v2
+      
+    - name: Build and Publish (using PyInstaller Docker)
+      uses: crazy-max/ghaction-dockerize@v2
       with:
-        python-version: ${{ matrix.python-version }}
-        architecture: 'x64'
-    
-    - name: Install Windows build tools
-      if: runner.os == 'Windows'
-      run: |
-        # 安装VC++构建工具（Windows需要）
-        choco install vcredist-all -y
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install setuptools wheel
-        
-        # 安装requirements.txt中的依赖
-        if (Test-Path requirements.txt) {
+        # 使用 PyInstaller 官方维护的容器，专门用于跨平台打包
+        image: cdrx/pyinstaller-windows:python3.9
+        name: pyinstaller-build
+        workdir: /src
+        run: |
+          # 1. 安装项目依赖
           pip install -r requirements.txt
-        }
-        
-        # 确保核心依赖
-        pip install streamlit>=1.28.0
-        pip install plotly>=5.18.0
-        pip install pandas>=2.0.0
-        pip install numpy>=1.24.0
-        
-        # Windows特有依赖
-        pip install pywin32
-        pip install pyinstaller==5.13.2
-        pip install psutil
-        
-        # 检查安装
-        python -c "import streamlit; print(f'Streamlit版本: {streamlit.__version__}')"
-    
-    - name: Test imports
-      run: |
-        python -c "
-        try:
-            import dashboard_final
-            print('✅ 主文件导入成功')
-        except Exception as e:
-            print(f'❌ 主文件导入失败: {e}')
-            import traceback
-            traceback.print_exc()
-        "
-    
-    - name: Build with PyInstaller
-      shell: pwsh
-      run: |
-        $ErrorActionPreference = "Stop"
-        
-        # 配置输出
-        $timestamp = Get-Date -Format "yyyyMMdd-HHmm"
-        $version = "v1.0"
-        $output_dir = "dist/ChannelMonitor-Win64-Py${{ matrix.python-version }}-$version-$timestamp"
-        
-        # 清理旧构建
-        Remove-Item -Path "build", "dist" -Recurse -Force -ErrorAction SilentlyContinue
-        
-        # 运行PyInstaller（详细模式）
-        Write-Host "开始Windows打包..." -ForegroundColor Green
-        python -m PyInstaller build.spec `
-          --distpath "$output_dir" `
-          --workpath "build" `
-          --noconfirm `
-          --clean `
-          --log-level DEBUG 2>&1 | Tee-Object -FilePath "build.log"
-        
-        # 验证输出
-        $exePath = "$output_dir/ChannelMonitor.exe"
-        if (Test-Path $exePath) {
-            Write-Host "✅ 构建成功: $exePath" -ForegroundColor Green
-            
-            # 获取文件大小
-            $size = (Get-Item $exePath).Length / 1MB
-            Write-Host "文件大小: $([math]::Round($size, 2)) MB"
-            
-            # 创建启动脚本
-            $batContent = @'
-@echo off
-chcp 65001 > nul
-echo ========================================
-echo     Channel Monitor - Windows 版本
-echo ========================================
-echo.
-echo 正在启动应用程序...
-echo 请等待大约30秒...
-echo.
-echo 启动完成后，请访问:
-echo http://localhost:8501
-echo ========================================
-echo.
-timeout /t 3 /nobreak > nul
-start "" "ChannelMonitor.exe"
-'@
-            Set-Content -Path "$output_dir/启动.bat" -Value $batContent -Encoding UTF8
-            
-            # 创建配置文件
-            $configContent = @{
-                "app_name" = "Channel Monitor"
-                "version" = $version
-                "python_version" = "${{ matrix.python-version }}"
-                "build_date" = $timestamp
-                "default_port" = 8501
-            } | ConvertTo-Json
-            Set-Content -Path "$output_dir/build_info.json" -Value $configContent
-            
-        } else {
-            Write-Host "❌ 构建失败" -ForegroundColor Red
-            Get-Content "build.log" -Tail 100
-            exit 1
-        }
-    
-    - name: Upload Windows Artifact
+          
+          # 2. 执行 PyInstaller 打包，使用 build.spec 文件
+          # 容器内部会生成 ChannelMonitor 文件夹
+          pyinstaller build.spec
+          
+          # 3. 复制启动脚本和 EXE 到指定目录
+          mkdir /dist
+          cp -r dist/ChannelMonitor /dist/
+          
+          # 4. 创建 Start.bat 启动脚本
+          echo "@echo off" > /dist/ChannelMonitor/Start.bat
+          echo "start /B ChannelMonitor.exe" >> /dist/ChannelMonitor/Start.bat
+
+    - name: Archive Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ChannelMonitor-Windows-Py${{ matrix.python-version }}
-        path: |
-          dist/ChannelMonitor-Win64-Py${{ matrix.python-version }}-*
-          build.log
-        retention-days: 30
-    
-    - name: Upload Release (Main branch only)
-      if: github.ref == 'refs/heads/main'
-      uses: softprops/action-gh-release@v1
-      with:
-        files: dist/ChannelMonitor-Win64-Py${{ matrix.python-version }}-*/*
-        tag_name: windows-${{ matrix.python-version }}
-        name: Windows Build (Python ${{ matrix.python-version }})
-        body: |
-          Windows可执行文件 - Python ${{ matrix.python-version }}
-          
-          使用说明：
-          1. 下载并解压
-          2. 运行`启动.bat`
-          3. 访问 http://localhost:8501
-        draft: false
-        prerelease: false
+        name: ChannelMonitor-${{ github.ref_name }}-Windows-Portable
+        # 上传 Docker 容器生成的最终交付文件夹
+        path: /dist/ChannelMonitor
