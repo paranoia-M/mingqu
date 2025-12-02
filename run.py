@@ -1,60 +1,58 @@
-# run.py (适配打包环境版)
-import subprocess
+# run.py (EXE 专用修复版)
+import threading
+import uvicorn
 import sys
-import time
 import os
-import signal
+import time
+from streamlit.web import cli as stcli
+from main import app
+import simulator
+import vision_sensor
 
-def run_system():
-    print("🚀 正在启动 [明渠非均匀流流量监测系统]...")
+def start_api():
+    # 在线程中直接运行 FastAPI，不通过 subprocess
+    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="error")
+
+def main():
+    # 1. 检查是否有特殊参数 (用于子进程调度，防止 EXE 递归)
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "simulator":
+            simulator.run_simulation()
+            return
+        elif cmd == "vision":
+            vision_sensor.run_vision()
+            return
+
+    print("🚀 正在启动一体化监测系统...")
+
+    # 2. 在后台线程启动后端 API
+    api_thread = threading.Thread(target=start_api, daemon=True)
+    api_thread.start()
     
-    # 检测是否在 PyInstaller 打包环境中运行
+    # 等待后端就绪
+    time.sleep(2)
+
+    # 3. 确定资源路径 (适配 PyInstaller)
     if getattr(sys, 'frozen', False):
-        # 如果是打包后的环境，Python 解释器不是 sys.executable，而是内部的依赖
-        # 在 PyInstaller 单目录模式下，我们尽量寻找系统中的 python 或者
-        # 更稳妥的方式：我们假设用户环境或者我们在 spec 里打包了 python 解释器。
-        # 但最简单的方案是：依然尝试调用 python。
-        # 注意：这里是一个简化处理。完美打包多进程 Streamlit 极度复杂。
-        # 我们尝试使用环境变量中的 python，或者回退到 sys.executable (如果打包包含了解释器)
-        python_cmd = sys.executable 
+        base_path = sys._MEIPASS
     else:
-        # 开发环境
-        python_cmd = sys.executable
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    dashboard_path = os.path.join(base_path, 'dashboard_final.py')
 
-    processes = []
-
-    try:
-        # 1. 启动后端
-        print("-> 正在启动后端 API (Port 8000)...")
-        # 注意：打包后 uvicorn 可能找不到，这里保持 -m 调用假设环境完整
-        backend = subprocess.Popen(
-            [python_cmd, "-m", "uvicorn", "main:app", "--reload"],
-            cwd=os.path.dirname(os.path.abspath(__file__))
-        )
-        processes.append(backend)
-        
-        time.sleep(2)
-
-        # 2. 启动前端
-        print("-> 正在启动前端 Dashboard (Port 8501)...")
-        frontend = subprocess.Popen(
-            [python_cmd, "-m", "streamlit", "run", "dashboard_final.py"],
-            cwd=os.path.dirname(os.path.abspath(__file__))
-        )
-        processes.append(frontend)
-
-        print("✅ 系统启动完成！按 Ctrl+C 可一键关闭所有服务。")
-        frontend.wait()
-
-    except KeyboardInterrupt:
-        print("\n🛑 接收到停止指令...")
-    finally:
-        for p in processes:
-            try:
-                p.terminate()
-                p.wait()
-            except: pass
-        print("👋 退出。")
+    # 4. 在主线程启动 Streamlit
+    # 伪造命令行参数，让 Streamlit 以为是从命令行启动的
+    sys.argv = [
+        "streamlit",
+        "run",
+        dashboard_path,
+        "--global.developmentMode=false",
+        "--server.port=8501"
+    ]
+    
+    print("✅ 前端正在加载，请稍候...")
+    sys.exit(stcli.main())
 
 if __name__ == "__main__":
-    run_system()
+    main()
