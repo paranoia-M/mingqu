@@ -1,22 +1,34 @@
 # -*- mode: python ; coding: utf-8 -*-
-# build.spec - 终极稳定版配置，修复 Hook 导入错误
+# build.spec - 修复 PyInstaller 内部 TOC 解析错误
 
 import sys
 import os
-# --- 修复点：只导入 collect_data_files，并将其用于所有数据收集 ---
-from PyInstaller.utils.hooks import collect_data_files
+
+# --- 导入 os 路径函数，用于跨平台路径 ---
+from PyInstaller.utils.hooks import get_package_paths, collect_submodules 
 # ----------------------------------------------------------------------
+
+# 获取 Streamlit 和 Plotly 的基础路径
+# (这是确保 PyInstaller 找到数据文件的关键)
+# try/except 用于保证CI环境能找到路径，否则使用默认值
+try:
+    streamlit_path = get_package_paths('streamlit')[0]
+    plotly_path = get_package_paths('plotly')[0]
+except:
+    streamlit_path = ''
+    plotly_path = ''
 
 # 1. ANALYSIS: 分析主文件和数据依赖
 a = Analysis(
     ['dashboard_final.py'], 
     pathex=['.'],           
     hiddenimports=[
-        'pkg_resources.py2_warn', 
-        'psutil._pswindows',      
-        'win32timezone',          
-        'uvicorn.lifespan.on',    
-        'uvicorn.lifespan.off'
+        'psutil._pswindows',
+        'win32timezone',
+        'uvicorn.lifespan.on',
+        'uvicorn.lifespan.off',
+        'pandas',  # 确保 Pandas 被完全导入
+        'plotly'   # 确保 Plotly 被完全导入
     ],
     excludes=[],
     runtime_hooks=[],
@@ -26,25 +38,25 @@ a = Analysis(
     noarchive=False
 )
 
-# 2. DATA FILES: 强制打包子目录和数据文件
+# 2. DATA FILES: 手动打包核心数据目录
+# 使用 [(source_path, dest_folder)] 格式
+
+# 强制收集 Streamlit 的静态文件和 Web 界面
+a.datas += [
+    (os.path.join(streamlit_path, 'static'), 'streamlit/static'),
+    (os.path.join(streamlit_path, 'web'), 'streamlit/web'),
+    (os.path.join(plotly_path, 'package_data'), 'plotly/package_data'),
+]
+
+# 强制收集项目自己的文件
 a.datas += [
     ('simulator.py', '.'),
     ('vision_sensor.py', '.'),
-    # 使用 tuple 格式打包目录，确保它们在 PyInstaller 内部是 collect_data_files 可以处理的格式
     ('core', 'core'),
     ('database', 'database'),
 ]
 
-# 3. HOOKS: 强制收集复杂包的动态文件和 DLLs 
-# 全部使用 collect_data_files
-a.datas += collect_data_files('plotly')
-a.datas += collect_data_files('pandas')
-a.datas += collect_data_files('streamlit')
-a.datas += collect_data_files('numpy')
-a.datas += collect_data_files('cv2') 
-a.datas += collect_data_files('uvicorn')
-
-# 4. PYZ 和 EXE 定义 (生成可执行文件)
+# 3. PYZ 和 EXE 定义 (生成可执行文件)
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
 exe = EXE(
