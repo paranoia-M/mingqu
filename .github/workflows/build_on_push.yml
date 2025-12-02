@@ -1,4 +1,4 @@
-name: Build and Archive on Push (Using Loader)
+name: Build and Archive on Push (Nuitka Compiler)
 
 on:
   push:
@@ -19,66 +19,46 @@ jobs:
       with:
         python-version: '3.9'
         
+    # 关键：安装 Visual Studio Build Tools (C++ Compiler)
+    - name: Install MSVC Build Tools
+      uses: ilammy/msvc-dev-cmd@v1 
+      
     - name: Install dependencies
       run: |
-        # 安装所有依赖 (包括打包工具)
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pyinstaller psutil
+        pip pip install nuitka zstd  # 安装 Nuitka 编译器
 
-    - name: Build the EXE with PyInstaller (Using Loader Script)
+    - name: Build the EXE with Nuitka
       id: build_exe
-      shell: pwsh # 强制使用 PowerShell
+      shell: pwsh # 使用 PowerShell
       run: |
-        # 1. 定义输出文件名和文件夹
         $timestamp = Get-Date -Format "yyyyMMdd-HHmm"
         $branch_name = "${{ github.ref_name }}"
-        $output_folder_name = "ChannelMonitor-${branch_name}-$timestamp"
-        $output_path = "dist/$output_folder_name"
-
-        # 2. 构建 PyInstaller 命令行参数 (以 loader.py 为主入口)
-        $command_args = @(
-            "loader.py", # <--- 关键：以 loader.py 为主入口
-            "--name", "ChannelMonitor", 
-            "--distpath", $output_path,
-            "--onedir", 
-            "--noconsole", 
-            
-            # --- 强制添加核心依赖 ---
-            "--collect-all", "plotly", 
-            "--collect-all", "streamlit", 
-            "--collect-all", "pandas",
-            "--collect-all", "uvicorn", 
-            "--collect-all", "fastapi",
-            "--collect-all", "numpy",
-            "--collect-all", "cv2", 
-            
-            # --- 强制添加项目数据文件 (包括 dashboard_final.py) ---
-            "--add-data", "dashboard_final.py;.", 
-            "--add-data", "core;core", 
-            "--add-data", "database;database",
-            "--add-data", "simulator.py;.",
-            "--add-data", "vision_sensor.py;."
-        )
+        $output_name = "ChannelMonitor-$timestamp"
         
-        Write-Host "Starting PyInstaller build..."
-        python -m PyInstaller $command_args
+        # 1. Nuitka 编译命令
+        # --standalone: 打包所有依赖
+        # --include-data-dir: 强制包含 Streamlit 和项目资源
         
-        # 3. 检查并创建 Start.bat 文件
-        if (Test-Path $output_path) {
-            $bat_content = "@echo off`r`nstart /B ChannelMonitor.exe"
-            Set-Content -Path "$output_path/Start.bat" -Value $bat_content
-            Write-Host "Successfully created $output_path/Start.bat"
-        } else {
-            Write-Host "Error: PyInstaller build failed or output directory not found."
-            exit 1
-        }
-
-        # 4. 传递文件夹名给 Artifacts 步骤
-        echo "::set-output name=output_name::$output_folder_name"
+        nuitka --standalone --onefile `
+        --output-dir="dist/$output_name" `
+        --output-filename="ChannelMonitor" `
+        --include-package=streamlit --include-package=plotly `
+        --include-package=pandas --include-package=numpy `
+        --include-package=uvicorn --include-package=fastapi `
+        --include-data-dir="core=core" `
+        --include-data-dir="database=database" `
+        --include-data-file="simulator.py=simulator.py" `
+        --include-data-file="vision_sensor.py=vision_sensor.py" `
+        dashboard_final.py
+        
+        # 2. 传递文件夹名给 Artifacts 步骤
+        echo "::set-output name=output_name::$output_name"
 
     - name: Archive Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ChannelMonitor-${{ github.ref_name }}-Portable
+        name: ChannelMonitor-Nuitka-Portable
+        # Nuitka 打包通常生成一个文件夹，我们上传这个文件夹
         path: dist/${{ steps.build_exe.outputs.output_name }}
