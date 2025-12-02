@@ -8,42 +8,52 @@ on:
 
 jobs:
   build_for_windows:
-    # 关键：使用 Docker 容器，并指定目标系统
+    # 使用 Ubuntu Runner
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Set up QEMU (for cross-platform emulation)
-      uses: docker/setup-qemu-action@v2
-      
-    - name: Build and Publish (using PyInstaller Docker)
-      uses: crazy-max/ghaction-dockerize@v2
+    - name: Run PyInstaller Cross-Platform Build
+      # 使用专门的跨平台打包 Action
+      uses: pytool/pyinstaller-action-windows@v2 
       with:
-        # 使用 PyInstaller 官方维护的容器，专门用于跨平台打包
-        image: cdrx/pyinstaller-windows:python3.9
-        name: pyinstaller-build
-        workdir: /src
-        run: |
-          # 1. 安装项目依赖
-          pip install -r requirements.txt
-          
-          # 2. 执行 PyInstaller 打包，使用 build.spec 文件
-          # 容器内部会生成 ChannelMonitor 文件夹
-          pyinstaller build.spec
-          
-          # 3. 复制启动脚本和 EXE 到指定目录
-          mkdir /dist
-          cp -r dist/ChannelMonitor /dist/
-          
-          # 4. 创建 Start.bat 启动脚本
-          echo "@echo off" > /dist/ChannelMonitor/Start.bat
-          echo "start /B ChannelMonitor.exe" >> /dist/ChannelMonitor/Start.bat
+        python_version: '3.9'
+        requirements_file: requirements.txt
+        # 指定主文件和 SPEC 文件，并设置最终 EXE 的名称
+        script_file: dashboard_final.py 
+        spec_file: build.spec
+        spec_name: ChannelMonitor # 最终 EXE 的名称
+        
+        # 禁用默认的打包步骤，因为我们使用 SPEC 文件
+        pre_build: |
+          echo "Using custom build.spec for complex dependencies."
+        
+        # 明确输出目录，用于后续上传
+        output_dir: dist/ChannelMonitor-Output
+        
+    - name: Get Build Folder Name
+      id: get_name
+      shell: bash
+      run: |
+        # 创建时间戳作为文件夹名
+        timestamp=$(date +'%Y%m%d-%H%M')
+        folder_name="ChannelMonitor-${{ github.ref_name }}-$timestamp"
+        echo "::set-output name=folder_name::$folder_name"
+        
+    - name: Create Launch Script and Organize
+      shell: bash
+      run: |
+        # 1. 重命名 PyInstaller 生成的文件夹
+        mv dist/ChannelMonitor-Output/ChannelMonitor dist/${{ steps.get_name.outputs.folder_name }}
+        
+        # 2. 创建 Start.bat 启动脚本
+        echo "@echo off" > dist/${{ steps.get_name.outputs.folder_name }}/Start.bat
+        echo "start /B ChannelMonitor.exe" >> dist/${{ steps.get_name.outputs.folder_name }}/Start.bat
 
     - name: Archive Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ChannelMonitor-${{ github.ref_name }}-Windows-Portable
-        # 上传 Docker 容器生成的最终交付文件夹
-        path: /dist/ChannelMonitor
+        name: ChannelMonitor-Portable
+        path: dist/${{ steps.get_name.outputs.folder_name }}
