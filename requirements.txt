@@ -10,3 +10,5 @@ opencv-python
 plotly
 psutil          # 跨平台进程管理 (必须)
 pyinstaller     # 打包工具 (必须)
+sys
+os
