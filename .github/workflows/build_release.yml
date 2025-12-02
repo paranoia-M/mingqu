@@ -1,0 +1,56 @@
+name: Build and Archive on Push
+
+on:
+  push:
+    branches:
+      - main       # 监听主分支
+      - develop    # 监听开发分支
+
+jobs:
+  build_windows_exe:
+    runs-on: windows-latest  # 使用 Windows 虚拟机进行构建
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v3
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        # 安装依赖，确保包含了所有需要的库
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller  # 确保 pyinstaller 单独安装
+        pip install psutil      # 确保 psutil (用于跨平台进程管理) 存在
+
+    - name: Build the EXE with PyInstaller
+      id: build_exe
+      run: |
+        # 定义输出文件名，包含分支和时间戳
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmm"
+        $branch_name = "${{ github.ref_name }}"
+        $output_name = "ChannelMonitor-${branch_name}-${timestamp}"
+
+        # 使用 PyInstaller 打包应用
+        pyinstaller dashboard_final.py ^
+        --name "$output_name" ^
+        --onefile ^
+        --noconsole ^
+        --collect-all "plotly" ^
+        --collect-all "streamlit" ^
+        --collect-all "pandas" ^
+        --add-data "core;core" ^
+        --add-data "database;database" ^
+        --add-data "simulator.py;." ^
+        --add-data "vision_sensor.py;."
+        
+    - name: Archive Build Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        # 将生成的 EXE 文件上传为 GitHub Actions Artifact
+        name: ${{ steps.build_exe.outputs.output_name }}-Build
+        path: dist/*.exe

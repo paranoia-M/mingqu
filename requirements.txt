@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+numpy
+pandas
+streamlit
+requests
+opencv-python
+plotly
+psutil          # 跨平台进程管理 (必须)
+pyinstaller     # 打包工具 (必须)
