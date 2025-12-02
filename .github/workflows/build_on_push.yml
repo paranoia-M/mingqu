@@ -1,4 +1,4 @@
-name: Build and Archive on Push
+name: Build and Archive on Push (No SPEC)
 
 on:
   push:
@@ -7,53 +7,82 @@ on:
       - develop
 
 jobs:
-  build_for_windows:
-    # 使用 Ubuntu Runner
-    runs-on: ubuntu-latest
+  build_windows_exe:
+    runs-on: windows-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Run PyInstaller Cross-Platform Build
-      # 使用专门的跨平台打包 Action
-      uses: pytool/pyinstaller-action-windows@v2 
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v3
       with:
-        python_version: '3.9'
-        requirements_file: requirements.txt
-        # 指定主文件和 SPEC 文件，并设置最终 EXE 的名称
-        script_file: dashboard_final.py 
-        spec_file: build.spec
-        spec_name: ChannelMonitor # 最终 EXE 的名称
+        python-version: '3.9'
         
-        # 禁用默认的打包步骤，因为我们使用 SPEC 文件
-        pre_build: |
-          echo "Using custom build.spec for complex dependencies."
-        
-        # 明确输出目录，用于后续上传
-        output_dir: dist/ChannelMonitor-Output
-        
-    - name: Get Build Folder Name
-      id: get_name
-      shell: bash
+    - name: Install dependencies
       run: |
-        # 创建时间戳作为文件夹名
-        timestamp=$(date +'%Y%m%d-%H%M')
-        folder_name="ChannelMonitor-${{ github.ref_name }}-$timestamp"
-        echo "::set-output name=folder_name::$folder_name"
-        
-    - name: Create Launch Script and Organize
-      shell: bash
+        # 安装所有依赖 (包括打包工具)
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller psutil # 确保打包工具和进程管理工具安装
+
+    - name: Build the EXE with PyInstaller (CLI OVERLOAD)
+      id: build_exe
+      shell: pwsh # 强制使用 PowerShell
       run: |
-        # 1. 重命名 PyInstaller 生成的文件夹
-        mv dist/ChannelMonitor-Output/ChannelMonitor dist/${{ steps.get_name.outputs.folder_name }}
+        # 1. 定义输出文件名和文件夹
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmm"
+        $branch_name = "${{ github.ref_name }}"
+        $output_folder_name = "ChannelMonitor-${branch_name}-$timestamp"
+        $output_path = "dist/$output_folder_name"
+
+        # 2. 构建 PyInstaller 完整命令行参数数组
+        $command_args = @(
+            "dashboard_final.py",
+            "--name", "ChannelMonitor", 
+            "--distpath", $output_path,
+            "--onedir", 
+            "--noconsole", 
+            
+            # --- 强制收集核心依赖 (代替 SPEC 文件) ---
+            "--collect-all", "plotly", 
+            "--collect-all", "streamlit", 
+            "--collect-all", "pandas",
+            "--collect-all", "uvicorn", 
+            "--collect-all", "fastapi",
+            "--collect-all", "numpy",
+            "--collect-all", "cv2", 
+            
+            # --- 强制隐藏导入 (解决运行时 DLL 缺失) ---
+            "--hidden-import", "psutil._pswindows", 
+            "--hidden-import", "win32timezone",
+            
+            # --- 强制添加项目数据文件 (Windows 路径格式: src;dest) ---
+            "--add-data", "core;core", 
+            "--add-data", "database;database",
+            "--add-data", "simulator.py;.",
+            "--add-data", "vision_sensor.py;."
+        )
         
-        # 2. 创建 Start.bat 启动脚本
-        echo "@echo off" > dist/${{ steps.get_name.outputs.folder_name }}/Start.bat
-        echo "start /B ChannelMonitor.exe" >> dist/${{ steps.get_name.outputs.folder_name }}/Start.bat
+        # 3. 执行命令: python -m pyinstaller [参数列表]
+        Write-Host "Starting PyInstaller build..."
+        python -m PyInstaller $command_args
+        
+        # 4. 检查并创建 Start.bat 文件
+        if (Test-Path $output_path) {
+            $bat_content = "@echo off`r`nstart /B ChannelMonitor.exe"
+            Set-Content -Path "$output_path/Start.bat" -Value $bat_content
+            Write-Host "Successfully created $output_path/Start.bat"
+        } else {
+            Write-Host "Error: PyInstaller build failed or output directory not found."
+            exit 1
+        }
+
+        # 5. 传递文件夹名给 Artifacts 步骤
+        echo "::set-output name=output_name::$output_folder_name"
 
     - name: Archive Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ChannelMonitor-Portable
-        path: dist/${{ steps.get_name.outputs.folder_name }}
+        name: ChannelMonitor-${{ github.ref_name }}-Portable
+        path: dist/${{ steps.build_exe.outputs.output_name }}
