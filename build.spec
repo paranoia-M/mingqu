@@ -1,48 +1,48 @@
 # -*- mode: python ; coding: utf-8 -*-
-# build.spec
+# build.spec - 最终稳定版配置，修复 NameError
 
 import sys
 import os
+# --- 修复点：必须明确导入 PyInstaller 的工具函数 ---
+from PyInstaller.utils.hooks import collect_data_files, collect_data_data 
+# ----------------------------------------------------
 
-# 检查当前系统是否为 Windows (虽然我们在 CI 上是 Windows，但最好确保路径分隔符正确)
-is_win = sys.platform.startswith('win')
-
-# 定义需要包含的二进制文件（用于解决 DLL 缺失问题）
+# 1. ANALYSIS: 分析主文件和数据依赖
 a = Analysis(
-    ['dashboard_final.py'],
-    pathex=[],
-    binaries=[],
-    datas=[
-        ('core', 'core'),
-        ('database', 'database'),
-        ('simulator.py', '.'),
-        ('vision_sensor.py', '.'),
-    ],
+    ['dashboard_final.py'], 
+    pathex=['.'],           
     hiddenimports=[
-        'psutil._pswindows',
-        'six',
-        'pandas._libs.tslibs.base',
-        'fastapi',
-        'uvicorn.lifespan.on',
+        'pkg_resources.py2_warn', 
+        'psutil._pswindows',      
+        'win32timezone',          
+        'uvicorn.lifespan.on',    
         'uvicorn.lifespan.off'
     ],
-    hookspath=[],
-    runtime_hooks=[],
     excludes=[],
+    runtime_hooks=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,
     noarchive=False
 )
 
-# 强制收集 Streamlit 和 Plotly 的全部依赖
-a.datas += collect_data_files('streamlit')
-a.datas += collect_data_data('plotly')
-a.datas += collect_data_files('numpy') 
-a.datas += collect_data_files('pandas') 
-a.datas += collect_data_files('uvicorn')
-a.datas += collect_data_files('requests')
+# 2. DATA FILES: 强制打包子目录和数据文件
+a.datas += [
+    ('simulator.py', '.'),
+    ('vision_sensor.py', '.'),
+    ('core', 'core'),
+    ('database', 'database'),
+]
 
+# 3. HOOKS: 强制收集复杂包的动态文件和 DLLs 
+a.datas += collect_data_files('plotly')
+a.datas += collect_data_files('pandas')
+a.datas += collect_data_files('streamlit')
+a.datas += collect_data_files('numpy')
+a.datas += collect_data_files('cv2') # OpenCV
+a.datas += collect_data_files('uvicorn')
+
+# 4. PYZ 和 EXE 定义 (生成可执行文件)
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
 exe = EXE(
@@ -51,12 +51,11 @@ exe = EXE(
     a.binaries,
     a.zipfiles,
     a.datas,
-    name='ChannelMonitor', # 输出的EXE文件名
+    name='ChannelMonitor',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=[],
     runtime_tmpdir=None,
-    console=False  # 不显示黑色的命令行窗口
+    console=False 
 )
