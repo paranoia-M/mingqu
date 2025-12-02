@@ -21,21 +21,21 @@ jobs:
         
     - name: Install dependencies
       run: |
-        # 确保 Python 路径在 PATH 中
+        # 安装所有依赖 (包括打包和运行时)
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pyinstaller psutil
+        pip install pyinstaller psutil  # 确保打包工具和进程管理工具安装
 
     - name: Build the EXE with PyInstaller
       id: build_exe
-      shell: pwsh # 使用 PowerShell
+      shell: pwsh # 强制使用 PowerShell
       run: |
         # 1. 定义输出文件名和文件夹
         $timestamp = Get-Date -Format "yyyyMMdd-HHmm"
         $branch_name = "${{ github.ref_name }}"
         $output_folder_name = "ChannelMonitor-${branch_name}-$timestamp"
         
-        # 2. 构建 PyInstaller 命令行 (使用 python -m 执行，最可靠)
+        # 2. 构建 PyInstaller 命令行参数 (使用数组和 python -m 执行，最可靠)
         $command_args = @(
             "dashboard_final.py",
             "--name", "ChannelMonitor", 
@@ -52,12 +52,20 @@ jobs:
         )
         
         # 执行命令: python -m pyinstaller [参数列表]
-        python -m pyinstaller $command_args
+        python -m PyInstaller $command_args
         
-        # 3. 创建启动批处理文件 (Start.bat)
-        $bat_content = "@echo off`r`nstart /B ChannelMonitor.exe"
-        Set-Content -Path "dist/$output_folder_name/Start.bat" -Value $bat_content
+        # 3. 创建启动批处理文件 (Start.bat) - 只有打包成功后才执行
+        $output_path = "dist/$output_folder_name"
         
+        if (Test-Path $output_path) {
+            $bat_content = "@echo off`r`nstart /B ChannelMonitor.exe"
+            Set-Content -Path "$output_path/Start.bat" -Value $bat_content
+            Write-Host "Successfully created Start.bat in $output_path"
+        } else {
+            Write-Host "Error: PyInstaller output directory not found, build likely failed earlier."
+            exit 1
+        }
+
         # 4. 将最终文件夹名传递给 Artifacts 步骤
         echo "::set-output name=output_name::$output_folder_name"
 
