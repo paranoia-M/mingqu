@@ -1,70 +1,190 @@
 # -*- mode: python ; coding: utf-8 -*-
-# build.spec - 终极稳定版配置，修复 TOC 解析错误
+# build.spec - Windows专用打包配置
 
 import sys
 import os
-# 只导入需要的工具函数
-from PyInstaller.utils.hooks import get_package_paths
+from pathlib import Path
 
-# 获取 Streamlit, Plotly, Uvicorn 的基础路径
-try:
-    streamlit_path = get_package_paths('streamlit')[0][0]
-    plotly_path = get_package_paths('plotly')[0][0]
-    uvicorn_path = get_package_paths('uvicorn')[0][0]
-except:
-    streamlit_path = ''
-    plotly_path = ''
-    uvicorn_path = ''
-
+# Windows特有的隐藏导入
+WINDOWS_HIDDEN_IMPORTS = [
+    # Windows系统相关
+    'psutil._pswindows',
+    'win32timezone',
+    'pythoncom',
+    'pywintypes',
+    'win32api',
+    'win32process',
+    'win32event',
+    'win32security',
+    
+    # 防止Windows上的DLL问题
+    'multiprocessing.popen_spawn_win32',
+    
+    # Windows控制台支持
+    'colorama',
+]
 
 # 1. ANALYSIS: 分析主文件和数据依赖
-# 注意：a.binaries 保持为空列表，避免内部 Hook 污染
 a = Analysis(
     ['dashboard_final.py'], 
     pathex=['.'],           
     hiddenimports=[
-        'psutil._pswindows', 'win32timezone', 'uvicorn.lifespan.on', 'uvicorn.lifespan.off', 
-        'pandas', 'plotly', 'uvicorn', 'numpy', 'scipy', 'cv2'
+        # Streamlit核心
+        'streamlit.web.cli',
+        'streamlit.runtime',
+        'streamlit.runtime.caching',
+        'streamlit.proto',
+        'streamlit.watcher.local_watcher',
+        'streamlit.watcher.event_based_path_watcher',
+        
+        # ASGI服务器
+        'uvicorn.lifespan.on',
+        'uvicorn.lifespan.off',
+        'uvicorn.protocols.http',
+        'uvicorn.protocols.websockets',
+        'uvicorn.loops.auto',
+        'uvicorn.loops.asyncio',
+        
+        # 异步支持
+        'asyncio',
+        'asyncio.windows_events',  # Windows特有
+        'concurrent.futures',
+        
+        # HTTP/网络
+        'httpx',
+        'httpcore',
+        'httpcore._sync',
+        'httpcore._async',
+        'h11',
+        'h2',
+        
+        # 数据库/数据
+        'sqlalchemy',
+        'sqlalchemy.ext',
+        'sqlalchemy.dialects.sqlite',
+        'pandas',
+        'pandas._libs.tslibs',
+        'numpy',
+        'numpy.core',
+        
+        # 图形/绘图
+        'plotly',
+        'plotly.graph_objs',
+        'plotly.io',
+        'plotly.subplots',
+        'plotly.basedatatypes',
+        
+        # 其他必要库
+        'yaml',
+        'toml',
+        'PIL',
+        'PIL._imaging',
+        
+        # 日志/配置
+        'logging.handlers',
+        'email.mime.text',
+        'email.mime.multipart',
+        'email.policy',
+        
+        # 添加Windows特有的隐藏导入
+        *WINDOWS_HIDDEN_IMPORTS,
     ],
     excludes=[],
     runtime_hooks=[],
-    binaries=[], # <--- 关键修复点 1：不让 Hook 污染 binaries
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,
-    noarchive=False
+    noarchive=True,  # 设置为True便于调试
 )
 
-# 2. DATA FILES: 手动打包核心数据目录和依赖 (使用 3 元组格式)
-# 确保所有路径都是 3 元组 ('dest_name', 'source_path', 'type') 或 ('source_path', 'dest_folder')
+# 2. 收集数据文件 - Windows专用方法
+def collect_windows_data_files():
+    """Windows环境下的数据文件收集"""
+    datas = []
+    
+    try:
+        # Streamlit文件
+        import streamlit
+        streamlit_path = Path(streamlit.__file__).parent
+        
+        # 递归收集streamlit静态文件
+        for root, dirs, files in os.walk(streamlit_path / "static"):
+            for file in files:
+                if not file.endswith(('.py', '.pyc')):
+                    src = Path(root) / file
+                    rel_path = src.relative_to(streamlit_path.parent)
+                    dest = str(rel_path.parent)
+                    datas.append((str(src), dest))
+                    
+        # streamlit/runtime
+        runtime_path = streamlit_path / "runtime"
+        if runtime_path.exists():
+            datas.append((str(runtime_path), "streamlit/runtime"))
+            
+    except ImportError as e:
+        print(f"警告: 导入streamlit失败 - {e}")
+    
+    try:
+        # Plotly文件
+        import plotly
+        plotly_path = Path(plotly.__file__).parent
+        
+        # plotly包数据
+        package_data = plotly_path / "package_data"
+        if package_data.exists():
+            datas.append((str(package_data), "plotly/package_data"))
+            
+    except ImportError as e:
+        print(f"警告: 导入plotly失败 - {e}")
+    
+    return datas
 
-# 强制收集 Streamlit 的 Web 资源
-a.datas += [
-    (os.path.join(streamlit_path, 'static'), 'streamlit/static'),
-    (os.path.join(streamlit_path, 'web'), 'streamlit/web'),
-]
+# 添加数据文件
+print("正在收集Windows数据文件...")
+a.datas += collect_windows_data_files()
 
-# 强制收集 Plotly 的核心数据
-a.datas += [
-    (os.path.join(plotly_path, 'package_data'), 'plotly/package_data')
-]
-
-# 强制收集项目自己的文件
-a.datas += [
+# 3. 添加项目文件
+PROJECT_FILES = [
     ('simulator.py', '.'),
     ('vision_sensor.py', '.'),
-    ('core', 'core'),
-    ('database', 'database'),
 ]
 
-# 3. PYZ 和 EXE 定义 (生成可执行文件)
+for src, dest in PROJECT_FILES:
+    if os.path.exists(src):
+        a.datas.append((src, dest))
+        print(f"已添加: {src} -> {dest}")
+
+# 4. 处理二进制文件 - Windows特有
+def filter_windows_binaries():
+    """过滤和添加Windows特有的二进制文件"""
+    binaries = []
+    
+    # 保留所有二进制文件，让PyInstaller自动处理
+    # 这里可以添加特定DLL的路径
+    return binaries
+
+# 5. Windows特有的配置
+# 添加Windows manifest（可选）
+# manifest = """
+# <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+# <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+#   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+#     <security>
+#       <requestedPrivileges>
+#         <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+#       </requestedPrivileges>
+#     </security>
+#   </trustInfo>
+# </assembly>
+# """
+
+# 6. PYZ和EXE配置
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
-# 关键修复点 2：将 a.binaries 从 EXE 构造函数中移除（因为它已经被清空，而且是错误源）
 exe = EXE(
     pyz,
     a.scripts,
-    # a.binaries,  <--- 已移除
+    a.binaries,
     a.zipfiles,
     a.datas,
     name='ChannelMonitor',
@@ -72,6 +192,14 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    upx_exclude=[],  # 可以排除某些文件
     runtime_tmpdir=None,
-    console=False 
+    console=True,  # Windows建议先用True查看错误
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,  # 自动检测（64位）
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=None,  # 可以添加.ico图标
+    # manifest=manifest,
 )
