@@ -1,0 +1,128 @@
+name: Build Smart Monitor System
+
+# 触发条件：当你 push 代码到 main 分支，或者打上了 v* 的标签（如 v1.0）
+on:
+  push:
+    branches: [ "main" ]
+    tags:
+      - 'v*'
+  workflow_dispatch: # 允许手动点击按钮触发
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9' # 建议使用 3.9 或 3.10，兼容性最好
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Create PyInstaller Spec file
+      # 我们需要生成一个复杂的 spec 文件来告诉打包工具包含哪些资源
+      run: |
+        echo "Creating build.spec..."
+        # 下面这段 Python 脚本会自动生成 spec 配置
+        python -c "
+        import streamlit
+        import os
+        streamlit_path = os.path.dirname(streamlit.__file__)
+        
+        spec_content = f'''
+        # -*- mode: python ; coding: utf-8 -*-
+        from PyInstaller.utils.hooks import collect_all
+
+        # 收集 streamlit 和其他库的所有资源文件
+        datas = [
+            (r'{streamlit_path}', 'streamlit'),
+            ('pages', 'pages'),
+            ('core', 'core'),
+            ('database', 'database'),
+            ('simulator.py', '.'),
+            ('vision_sensor.py', '.'),
+            ('dashboard_final.py', '.')
+        ]
+        binaries = []
+        hiddenimports = [
+            'streamlit', 'pandas', 'numpy', 'altair', 'pydeck', 'plotly', 
+            'uvicorn', 'fastapi', 'sqlalchemy', 'cv2', 'requests'
+        ]
+
+        # 自动收集依赖的资源
+        tmp_ret = collect_all('streamlit')
+        datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+        
+        tmp_ret = collect_all('altair')
+        datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+        
+        tmp_ret = collect_all('plotly')
+        datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+        block_cipher = None
+
+        a = Analysis(
+            ['run.py'],
+            pathex=[],
+            binaries=binaries,
+            datas=datas,
+            hiddenimports=hiddenimports,
+            hookspath=[],
+            hooksconfig={},
+            runtime_hooks=[],
+            excludes=[],
+            win_no_prefer_redirects=False,
+            win_private_assemblies=False,
+            cipher=block_cipher,
+            noarchive=False,
+        )
+        pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+        exe = EXE(
+            pyz,
+            a.scripts,
+            [],
+            exclude_binaries=True,
+            name='SmartChannelMonitor',
+            debug=False,
+            bootloader_ignore_signals=False,
+            strip=False,
+            upx=True,
+            console=True,  # 开启控制台以便查看日志，如果是纯GUI应用可改为 False
+            disable_windowed_traceback=False,
+            argv_emulation=False,
+            target_arch=None,
+            codesign_identity=None,
+            entitlements_file=None,
+            icon=None, # 如果有图标可以在这里加
+        )
+        coll = COLLECT(
+            exe,
+            a.binaries,
+            a.zipfiles,
+            a.datas,
+            strip=False,
+            upx=True,
+            upx_exclude=[],
+            name='SmartChannelMonitor',
+        )
+        '''
+        with open('build.spec', 'w', encoding='utf-8') as f:
+            f.write(spec_content)
+        "
+
+    - name: Build with PyInstaller
+      run: pyinstaller build.spec
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: SmartChannelMonitor-Windows
+        path: dist/SmartChannelMonitor

@@ -14,3 +14,4 @@ sys
 os
 nuitka
 zstd
+plotly
