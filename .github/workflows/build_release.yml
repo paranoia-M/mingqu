@@ -11,27 +11,47 @@ jobs:
     runs-on: windows-latest
     
     steps:
-    # ... (代码省略) ...
+    - name: Checkout code
+      uses: actions/checkout@v3
+
     - name: Set up Python 3.9
       uses: actions/setup-python@v3
       with:
         python-version: '3.9'
         
     - name: Install dependencies
-      # ... (代码省略) ...
+      run: |
+        python -m pip install --upgrade pip
+        # 安装所有依赖
+        pip install -r requirements.txt
+        pip install pyinstaller psutil
 
     - name: Build the EXE with PyInstaller
       id: build_exe
-      # ... (代码省略) ...
-      
-    - name: Archive Build Artifact
-      # 👇 修复点：将 v3 升级到 v4
-      uses: actions/upload-artifact@v4  # <--- 已经修复!
-      with:
-        # 这个 name 是输出的 Artifact 名称
-        name: ChannelMonitor-${{ github.ref_name }}-${{ env.TIMESTAMP }}-Build
-        path: dist/ChannelMonitor.exe # 确保路径正确
+      run: |
+        # 确保在 Windows 环境中使用正确的 Python 启动命令
+        # PowerShell 环境下的变量定义
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmm"
+        $output_name = "ChannelMonitor-${{ github.ref_name }}-$timestamp"
         
-      env:
-        # 定义一个时间戳变量供 Artifact Name 使用
-        TIMESTAMP: ${{ github.sha }}
+        # 执行 PyInstaller 打包
+        pyinstaller dashboard_final.py `
+        --name $output_name `
+        --onefile `
+        --noconsole `
+        --collect-all "plotly" `
+        --collect-all "streamlit" `
+        --collect-all "pandas" `
+        --add-data "core;core" `
+        --add-data "database;database" `
+        --add-data "simulator.py;." `
+        --add-data "vision_sensor.py;."
+        
+        # 将输出文件名传给下一步骤
+        echo "::set-output name=output_name::$output_name"
+
+    - name: Archive Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.build_exe.outputs.output_name }}-Artifact
+        path: dist/${{ steps.build_exe.outputs.output_name }}.exe
